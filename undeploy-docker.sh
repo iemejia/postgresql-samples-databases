@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# undeploy-docker.sh — Stop and remove the polls PostgreSQL Docker container
+# undeploy-docker.sh — Stop and remove the shared PostgreSQL Docker container
 # =============================================================================
 # Removes the container created by deploy-docker.sh.  By default it also
 # removes the Docker image to free disk space.  Use --keep-image to skip that.
@@ -18,7 +18,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-CONTAINER_NAME="${CONTAINER_NAME:-polls-db}"
+CONTAINER_NAME="${CONTAINER_NAME:-samples-db}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18}"
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ for arg in "$@"; do
       echo "  --help, -h     Show this help message"
       echo ""
       echo "Environment variables:"
-      echo "  CONTAINER_NAME   Container name  (default: polls-db)"
+      echo "  CONTAINER_NAME   Container name  (default: samples-db)"
       echo "  POSTGRES_IMAGE   Docker image     (default: postgres:18)"
       exit 0
       ;;

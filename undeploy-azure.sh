@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # =============================================================================
-# undeploy-azure.sh — Remove the polls database resources from Azure
+# undeploy-azure.sh — Remove the sample database resources from Azure
 # =============================================================================
 # Deletes the Azure resources provisioned by deploy-azure.sh / main.bicep.
 #
-# By default, deletes the entire resource group (server, database, firewall
+# By default, deletes the entire resource group (server, databases, firewall
 # rules, and the group itself).  Use --server-only to remove just the
 # PostgreSQL Flexible Server while keeping the resource group.
 #
@@ -21,8 +21,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-polls-rg}"
-SERVER_NAME="${SERVER_NAME:-polls-pg-server}"
+AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-samples-rg}"
+SERVER_NAME="${SERVER_NAME:-samples-pg-server}"
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -43,8 +43,8 @@ for arg in "$@"; do
       echo "  --help, -h     Show this help message"
       echo ""
       echo "Environment variables:"
-      echo "  AZURE_RESOURCE_GROUP  Resource group name  (default: polls-rg)"
-      echo "  SERVER_NAME           Server name          (default: polls-pg-server)"
+      echo "  AZURE_RESOURCE_GROUP  Resource group name  (default: samples-rg)"
+      echo "  SERVER_NAME           Server name          (default: samples-pg-server)"
       exit 0
       ;;
     *)
@@ -90,7 +90,7 @@ if "$SERVER_ONLY"; then
   fi
 
   log "Deleting PostgreSQL Flexible Server '${SERVER_NAME}'..."
-  log "This will remove the server, its databases, and firewall rules."
+  log "This will remove the server, all its databases, and firewall rules."
   az postgres flexible-server delete \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --name "$SERVER_NAME" \

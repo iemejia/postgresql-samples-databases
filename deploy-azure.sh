@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# deploy-azure.sh — Deploy the polls database to Azure Database for PostgreSQL
+# deploy-azure.sh — Deploy all sample databases to Azure Database for PostgreSQL
 # =============================================================================
 # Provisions an Azure Database for PostgreSQL Flexible Server using the Bicep
-# template (main.bicep), then loads the polls schema and sample data.
+# template (main.bicep), then auto-discovers subdirectories containing a
+# schema.sql file and loads each as a separate database on the same server.
 #
-# The script:
-#   1. Verifies prerequisites (az CLI, psql)
-#   2. Creates the Azure resource group (if it doesn't exist)
-#   3. Detects your public IP for the firewall rule
-#   4. Deploys main.bicep (server + database + firewall rules)
-#   5. Loads the schema (polls-schema.sql)
-#   6. Loads the sample data (generate-data.sql)
+# Each subdirectory can contain:
+#   schema.sql       — DDL (required; the CREATE DATABASE line is skipped)
+#   data.sql         — DML / sample data (optional)
+#
+# The database name is derived from the subdirectory name (lowered, hyphens
+# replaced with underscores).
 #
 # Usage:
 #   ./deploy-azure.sh                                          # interactive
+#   ./deploy-azure.sh polls-database-schema                    # single db
 #   AZURE_RESOURCE_GROUP=my-rg POSTGRES_PASSWORD='P@ss1234!' ./deploy-azure.sh
 #
 # Requirements: az CLI (logged in), psql
@@ -25,12 +26,11 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-polls-rg}"
+AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-samples-rg}"
 AZURE_LOCATION="${AZURE_LOCATION:-swedencentral}"
-SERVER_NAME="${SERVER_NAME:-polls-pg-server}"
+SERVER_NAME="${SERVER_NAME:-samples-pg-server}"
 ADMIN_LOGIN="${ADMIN_LOGIN:-pgadmin}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
-POSTGRES_DB="${POSTGRES_DB:-poll}"
 POSTGRES_VERSION="${POSTGRES_VERSION:-18}"
 SKU_TIER="${SKU_TIER:-Burstable}"
 SKU_NAME="${SKU_NAME:-Standard_B1ms}"
@@ -38,19 +38,15 @@ STORAGE_SIZE_GB="${STORAGE_SIZE_GB:-32}"
 LOAD_SAMPLE_DATA="${LOAD_SAMPLE_DATA:-true}"
 
 # ---------------------------------------------------------------------------
-# Resolve paths to local files (relative to this script)
+# Resolve paths (relative to this script)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BICEP_FILE="${SCRIPT_DIR}/main.bicep"
-SCHEMA_FILE="${SCRIPT_DIR}/polls-schema.sql"
-DATA_FILE="${SCRIPT_DIR}/generate-data.sql"
 
-for f in "$BICEP_FILE" "$SCHEMA_FILE" "$DATA_FILE"; do
-  if [[ ! -f "$f" ]]; then
-    echo "ERROR: Required file not found: $f" >&2
-    exit 1
-  fi
-done
+if [[ ! -f "$BICEP_FILE" ]]; then
+  echo "ERROR: Required file not found: $BICEP_FILE" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -85,6 +81,26 @@ detect_public_ip() {
   echo "$ip"
 }
 
+# Convert a directory name to a valid PostgreSQL database name
+to_db_name() {
+  echo "$1" | tr '[:upper:]' '[:lower:]' | tr '-' '_'
+}
+
+# ---------------------------------------------------------------------------
+# Discover databases
+# ---------------------------------------------------------------------------
+discover_databases() {
+  local dirs=()
+  for dir in "$SCRIPT_DIR"/*/; do
+    [[ -f "${dir}schema.sql" ]] && dirs+=("$(basename "$dir")")
+  done
+
+  if [[ ${#dirs[@]} -eq 0 ]]; then
+    die "No subdirectories with a schema.sql file found in ${SCRIPT_DIR}."
+  fi
+  echo "${dirs[@]}"
+}
+
 # ---------------------------------------------------------------------------
 # Preflight checks
 # ---------------------------------------------------------------------------
@@ -92,13 +108,32 @@ log "Checking prerequisites..."
 check_command "az"   "Install: https://learn.microsoft.com/cli/azure/install-azure-cli"
 check_command "psql" "Install: https://www.postgresql.org/download/"
 
-# Verify the user is logged in
 if ! az account show &>/dev/null; then
   die "Not logged in to Azure. Run 'az login' first."
 fi
 
-# Prompt for password if not supplied
 prompt_password
+
+# ---------------------------------------------------------------------------
+# Determine which databases to deploy
+# ---------------------------------------------------------------------------
+if [[ $# -gt 0 ]]; then
+  TARGET_DIRS=("$@")
+  for d in "${TARGET_DIRS[@]}"; do
+    if [[ ! -f "${SCRIPT_DIR}/${d}/schema.sql" ]]; then
+      die "No schema.sql found in subdirectory '${d}'."
+    fi
+  done
+else
+  read -ra TARGET_DIRS <<< "$(discover_databases)"
+fi
+
+log "Databases to deploy: ${TARGET_DIRS[*]}"
+
+# Build a comma-separated list of database names for the Bicep template
+# (The first database is passed as the main databaseName parameter; extras
+#  are created via psql after the server is up.)
+FIRST_DB_NAME="$(to_db_name "${TARGET_DIRS[0]}")"
 
 # ---------------------------------------------------------------------------
 # Detect public IP for firewall rule
@@ -125,7 +160,7 @@ az group create \
   --output none
 
 # ---------------------------------------------------------------------------
-# Deploy Bicep template
+# Deploy Bicep template (server + first database + firewall rules)
 # ---------------------------------------------------------------------------
 log "Deploying Bicep template (this may take a few minutes)..."
 
@@ -133,7 +168,7 @@ DEPLOYMENT_PARAMS=(
   "serverName=${SERVER_NAME}"
   "administratorLogin=${ADMIN_LOGIN}"
   "administratorLoginPassword=${POSTGRES_PASSWORD}"
-  "databaseName=${POSTGRES_DB}"
+  "databaseName=${FIRST_DB_NAME}"
   "postgresVersion=${POSTGRES_VERSION}"
   "skuTier=${SKU_TIER}"
   "skuName=${SKU_NAME}"
@@ -150,10 +185,9 @@ DEPLOY_OUTPUT="$(az deployment group create \
   --parameters "${DEPLOYMENT_PARAMS[@]}" \
   --output json)"
 
-# Extract outputs
+# Extract FQDN
 FQDN="$(echo "$DEPLOY_OUTPUT" | az query -q "properties.outputs.fqdn.value" --output tsv 2>/dev/null || true)"
 if [[ -z "$FQDN" ]]; then
-  # Fallback: query the deployment outputs directly
   FQDN="$(az deployment group show \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --name main \
@@ -162,7 +196,6 @@ if [[ -z "$FQDN" ]]; then
 fi
 
 if [[ -z "$FQDN" ]]; then
-  # Last resort: derive FQDN from server name
   FQDN="${SERVER_NAME}.postgres.database.azure.com"
   warn "Could not read FQDN from deployment outputs. Using derived value: ${FQDN}"
 fi
@@ -170,53 +203,74 @@ fi
 log "Server deployed: ${FQDN}"
 
 # ---------------------------------------------------------------------------
-# Load schema
+# Deploy each database
 # ---------------------------------------------------------------------------
-log "Loading schema into '${POSTGRES_DB}'..."
-# Skip the CREATE DATABASE line — Bicep already created the database
-grep -v '^CREATE DATABASE' "$SCHEMA_FILE" | \
-  PGPASSWORD="$POSTGRES_PASSWORD" psql \
-    -h "$FQDN" \
-    -p 5432 \
-    -U "$ADMIN_LOGIN" \
-    -d "$POSTGRES_DB" \
-    -v ON_ERROR_STOP=1 \
-    --set=sslmode=require
+DEPLOYED=()
 
-log "Schema loaded successfully."
+for dir_name in "${TARGET_DIRS[@]}"; do
+  DB_NAME="$(to_db_name "$dir_name")"
+  SCHEMA_FILE="${SCRIPT_DIR}/${dir_name}/schema.sql"
+  DATA_FILE="${SCRIPT_DIR}/${dir_name}/data.sql"
 
-# ---------------------------------------------------------------------------
-# Load sample data
-# ---------------------------------------------------------------------------
-if [[ "$LOAD_SAMPLE_DATA" == "true" ]]; then
-  log "Loading sample data into '${POSTGRES_DB}'..."
-  PGPASSWORD="$POSTGRES_PASSWORD" psql \
-    -h "$FQDN" \
-    -p 5432 \
-    -U "$ADMIN_LOGIN" \
-    -d "$POSTGRES_DB" \
-    -v ON_ERROR_STOP=1 \
-    --set=sslmode=require \
-    -f "$DATA_FILE"
+  log "--- Deploying database '${DB_NAME}' from '${dir_name}/' ---"
 
-  log "Sample data loaded successfully."
-else
-  log "Skipping sample data (LOAD_SAMPLE_DATA=${LOAD_SAMPLE_DATA})."
-fi
+  # Create database if it wasn't created by the Bicep template
+  if [[ "$DB_NAME" != "$FIRST_DB_NAME" ]]; then
+    log "Creating database '${DB_NAME}'..."
+    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" \
+      --set=sslmode=require \
+      -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null || true
+  fi
+
+  # Load schema (skip any CREATE DATABASE lines)
+  log "Loading schema into '${DB_NAME}'..."
+  grep -vi '^CREATE DATABASE' "$SCHEMA_FILE" | \
+    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+      -h "$FQDN" \
+      -p 5432 \
+      -U "$ADMIN_LOGIN" \
+      -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 \
+      --set=sslmode=require
+
+  # Load sample data if present and enabled
+  if [[ "$LOAD_SAMPLE_DATA" == "true" ]] && [[ -f "$DATA_FILE" ]]; then
+    log "Loading sample data into '${DB_NAME}'..."
+    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+      -h "$FQDN" \
+      -p 5432 \
+      -U "$ADMIN_LOGIN" \
+      -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 \
+      --set=sslmode=require \
+      -f "$DATA_FILE"
+  elif [[ ! -f "$DATA_FILE" ]]; then
+    log "No data.sql found for '${dir_name}/' — skipping sample data."
+  else
+    log "Skipping sample data (LOAD_SAMPLE_DATA=${LOAD_SAMPLE_DATA})."
+  fi
+
+  DEPLOYED+=("$DB_NAME")
+done
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-log "Deployment complete!"
+log "Deployment complete!  ${#DEPLOYED[@]} database(s) deployed."
 echo ""
 echo "  Resource group : ${AZURE_RESOURCE_GROUP}"
 echo "  Server FQDN    : ${FQDN}"
 echo "  Port           : 5432"
-echo "  Database       : ${POSTGRES_DB}"
 echo "  Admin user     : ${ADMIN_LOGIN}"
 echo ""
+echo "  Databases:"
+for db in "${DEPLOYED[@]}"; do
+  echo "    - ${db}"
+done
+echo ""
 echo "Connect with:"
-echo "  psql \"postgresql://${ADMIN_LOGIN}:<password>@${FQDN}:5432/${POSTGRES_DB}?sslmode=require\""
+echo "  psql \"postgresql://${ADMIN_LOGIN}:<password>@${FQDN}:5432/<database>?sslmode=require\""
 echo ""
 echo "To tear down all resources:"
 echo "  az group delete --name ${AZURE_RESOURCE_GROUP} --yes --no-wait"

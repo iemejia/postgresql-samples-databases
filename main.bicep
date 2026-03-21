@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// main.bicep — Azure Database for PostgreSQL Flexible Server + polls database
+// main.bicep — Azure Database for PostgreSQL Flexible Server (generic)
 // ---------------------------------------------------------------------------
 // Deploys:
 //   1. A PostgreSQL Flexible Server with public network access
-//   2. The "poll" database on that server
+//   2. A single database on that server (additional databases are created by
+//      the deploy-azure.sh script via psql)
 //   3. A firewall rule to expose the PostgreSQL port (5432) to a given client IP
 //   4. An optional firewall rule to allow Azure-internal traffic
 //
@@ -16,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 // ---- Metadata -------------------------------------------------------------
-metadata description = 'Deploys an Azure Database for PostgreSQL Flexible Server with the polls database, firewall rules, and public access.'
+metadata description = 'Deploys an Azure Database for PostgreSQL Flexible Server with a database, firewall rules, and public access.'
 
 // ---- General parameters ---------------------------------------------------
 
@@ -31,7 +32,7 @@ param tags object = {}
 @description('Name of the PostgreSQL Flexible Server (3-63 chars, alphanumeric and hyphens only).')
 @minLength(3)
 @maxLength(63)
-param serverName string = 'polls-pg-server'
+param serverName string = 'samples-pg-server'
 
 @description('Administrator login name. Cannot be "azure_superuser", "admin", "administrator", "root", "guest", or "public".')
 @minLength(1)
@@ -112,10 +113,10 @@ param allowAzureServices bool = true
 
 // ---- Database parameters --------------------------------------------------
 
-@description('Name of the PostgreSQL database to create.')
+@description('Name of the initial PostgreSQL database to create. Additional databases are created by the deploy script.')
 @minLength(1)
 @maxLength(63)
-param databaseName string = 'poll'
+param databaseName string = 'postgres'
 
 @description('Character set for the database.')
 param databaseCharset string = 'UTF8'
@@ -187,9 +188,9 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2025-08-01' =
 }
 
 // ---------------------------------------------------------------------------
-// Database — creates the "poll" database on the server
+// Database — creates the initial database on the server
 // ---------------------------------------------------------------------------
-resource pollDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2025-08-01' = {
+resource initialDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2025-08-01' = {
   parent: postgresServer
   name: databaseName
   properties: {
@@ -236,11 +237,11 @@ output fqdn string = postgresServer.properties.fullyQualifiedDomainName
 @description('The PostgreSQL server name.')
 output serverNameOutput string = postgresServer.name
 
-@description('The database name.')
-output databaseNameOutput string = pollDatabase.name
+@description('The initial database name.')
+output databaseNameOutput string = initialDatabase.name
 
 @description('The PostgreSQL port (always 5432 for Azure Flexible Server).')
 output port int = 5432
 
-@description('Connection string template — substitute <password> before use.')
-output connectionString string = 'postgresql://${administratorLogin}:<password>@${postgresServer.properties.fullyQualifiedDomainName}:5432/${databaseName}?sslmode=require'
+@description('Connection string template — substitute <password> and <database> before use.')
+output connectionString string = 'postgresql://${administratorLogin}:<password>@${postgresServer.properties.fullyQualifiedDomainName}:5432/<database>?sslmode=require'
