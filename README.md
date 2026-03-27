@@ -123,9 +123,14 @@ the same server.
 
 ### Prerequisites
 
-- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
-  (logged in via `az login`)
-- [psql](https://www.postgresql.org/download/) client
+- An **Azure subscription** — [create a free account](https://azure.microsoft.com/free/)
+  if you don't have one
+- [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) —
+  after installing, run `az login` to authenticate
+- [psql](https://www.postgresql.org/download/) client — only the client tools
+  are needed, not a full PostgreSQL server
+- **curl** — used to detect your public IP for the firewall rule (pre-installed
+  on most Linux and macOS systems)
 
 ### Usage
 
