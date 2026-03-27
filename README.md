@@ -12,6 +12,7 @@ Flexible Server.
 | --- | --- |
 | [polls](./polls) | Lightweight polls / survey application (DDL + sample data) |
 | [adventureworks](./adventureworks) | AdventureWorks OLTP — 68 tables, 90 FKs, and 89 views across 10 schemas (converted from SQL Server) |
+| [dvdrental](./dvdrental) | DVD Rental store (Pagila) — 15 tables with partitioned payments, 7 views, triggers, and functions |
 
 > **Note:** Only subdirectories that contain a `schema.sql` file are picked up
 > by the generic deploy scripts. See [Adding a New Database](#adding-a-new-database)
@@ -50,6 +51,7 @@ Once complete the script prints connection details:
 
   Databases:
     - adventureworks
+    - dvdrental
     - polls
 ```
 
@@ -153,6 +155,7 @@ Once complete, the script prints connection details:
 
   Databases:
     - adventureworks
+    - dvdrental
     - polls
 
 Connect with:
@@ -319,12 +322,31 @@ my-new-db/
 | `schema.sql` | DDL — creates sequences, tables, indexes, and constraints |
 | `data.sql` | DML — inserts sample users, polls, metadata, questions, and answers |
 
+> **Source:** Original schema and data created for this repository.
+
 ### adventureworks/
 
 | File | Purpose |
 | --- | --- |
 | `schema.sql` | DDL — 10 schemas, 68 tables, 6 custom domains, 2 extensions (`uuid-ossp`, `tablefunc`), 87 views, 2 materialized views, 68 primary keys, 90 foreign keys |
 | `data.sql` | DML — sample data via `COPY FROM STDIN` (~86 MB, 760K lines covering all 68 tables) |
+
+> **Source:** Converted from Microsoft's
+> [AdventureWorks 2014 OLTP](https://learn.microsoft.com/sql/samples/adventureworks-install-configure)
+> sample database using
+> [lorint/AdventureWorks-for-Postgres](https://github.com/lorint/AdventureWorks-for-Postgres) (MIT License).
+
+### dvdrental/
+
+| File | Purpose |
+| --- | --- |
+| `schema.sql` | DDL — 15 tables (with partitioned `payment`), 7 views, 1 materialized view, 8 functions, 15 triggers, 36 foreign keys |
+| `data.sql` | DML — sample data via `COPY FROM STDIN` (~3.2 MB, ~50K rows across all tables) |
+
+> **Source:** Based on the
+> [Pagila](https://github.com/devrimgunduz/pagila) project (PostgreSQL License),
+> a PostgreSQL-native port of MySQL's
+> [Sakila](https://dev.mysql.com/doc/sakila/en/) sample database.
 
 ---
 
