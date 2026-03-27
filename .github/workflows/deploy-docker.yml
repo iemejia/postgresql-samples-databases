@@ -1,0 +1,96 @@
+name: Deploy Docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy all databases
+        run: |
+          chmod +x deploy-docker.sh
+          ./deploy-docker.sh
+
+      - name: Verify databases exist
+        run: |
+          DATABASES=$(docker exec samples-db psql -U postgres -tAc \
+            "SELECT datname FROM pg_database WHERE datname NOT IN ('postgres','template0','template1') ORDER BY datname;")
+          echo "Databases found:"
+          echo "$DATABASES"
+
+          for expected in adventureworks dvdrental polls; do
+            if echo "$DATABASES" | grep -qx "$expected"; then
+              echo "OK: $expected"
+            else
+              echo "FAIL: database '$expected' not found" >&2
+              exit 1
+            fi
+          done
+
+      - name: Verify adventureworks
+        run: |
+          TABLE_COUNT=$(docker exec samples-db psql -U postgres -d adventureworks -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema');")
+          echo "adventureworks tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 68 ]; then
+            echo "FAIL: expected at least 68 tables, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(docker exec samples-db psql -U postgres -d adventureworks -tAc \
+            "SELECT count(*) FROM person.person;")
+          echo "person.person rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: person.person is empty" >&2
+            exit 1
+          fi
+
+      - name: Verify dvdrental
+        run: |
+          TABLE_COUNT=$(docker exec samples-db psql -U postgres -d dvdrental -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';")
+          echo "dvdrental tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 15 ]; then
+            echo "FAIL: expected at least 15 tables, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(docker exec samples-db psql -U postgres -d dvdrental -tAc \
+            "SELECT count(*) FROM film;")
+          echo "film rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: film table is empty" >&2
+            exit 1
+          fi
+
+      - name: Verify polls
+        run: |
+          TABLE_COUNT=$(docker exec samples-db psql -U postgres -d polls -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';")
+          echo "polls tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 1 ]; then
+            echo "FAIL: expected at least 1 table, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(docker exec samples-db psql -U postgres -d polls -tAc \
+            "SELECT count(*) FROM users;")
+          echo "users rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: users table is empty" >&2
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always()
+        run: |
+          chmod +x undeploy-docker.sh
+          ./undeploy-docker.sh --keep-image
