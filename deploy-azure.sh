@@ -15,7 +15,7 @@
 #
 # Usage:
 #   ./deploy-azure.sh                                          # interactive
-#   ./deploy-azure.sh polls-database-schema                    # single db
+#   ./deploy-azure.sh polls                    # single db
 #   AZURE_RESOURCE_GROUP=my-rg POSTGRES_PASSWORD='P@ss1234!' ./deploy-azure.sh
 #
 # Requirements: az CLI (logged in), psql

@@ -10,7 +10,7 @@ Flexible Server.
 
 | Directory | Description |
 | --- | --- |
-| [polls-database-schema](./polls-database-schema) | Lightweight polls / survey application (DDL + sample data) |
+| [polls](./polls) | Lightweight polls / survey application (DDL + sample data) |
 | [adventureworks](./adventureworks) | AdventureWorks OLTP — 68 tables, 90 FKs, and 89 views across 10 schemas (converted from SQL Server) |
 
 > **Note:** Only subdirectories that contain a `schema.sql` file are picked up
@@ -50,7 +50,7 @@ Once complete the script prints connection details:
 
   Databases:
     - adventureworks
-    - polls_database_schema
+    - polls
 ```
 
 ### Deploying a single database
@@ -58,7 +58,7 @@ Once complete the script prints connection details:
 Pass one or more subdirectory names to deploy only those:
 
 ```bash
-./deploy-docker.sh polls-database-schema
+./deploy-docker.sh polls
 ```
 
 ### Connecting
@@ -153,7 +153,7 @@ Once complete, the script prints connection details:
 
   Databases:
     - adventureworks
-    - polls_database_schema
+    - polls
 
 Connect with:
   psql "postgresql://pgadmin:<password>@samples-pg-server.postgres.database.azure.com:5432/<database>?sslmode=require"
@@ -162,7 +162,7 @@ Connect with:
 ### Deploying a single database
 
 ```bash
-./deploy-azure.sh polls-database-schema
+./deploy-azure.sh polls
 ```
 
 ### Azure Configuration
@@ -218,19 +218,19 @@ FQDN="samples-pg-server.postgres.database.azure.com"
 PGPASSWORD='P@ssw0rd123!' psql \
   -h "$FQDN" -p 5432 -U pgadmin \
   --set=sslmode=require \
-  -c "CREATE DATABASE polls_database_schema;"
+  -c "CREATE DATABASE polls;"
 
 # Load schema (skip the CREATE DATABASE line)
-grep -v '^CREATE DATABASE' polls-database-schema/schema.sql | \
+grep -v '^CREATE DATABASE' polls/schema.sql | \
   PGPASSWORD='P@ssw0rd123!' psql \
-    -h "$FQDN" -p 5432 -U pgadmin -d polls_database_schema \
+    -h "$FQDN" -p 5432 -U pgadmin -d polls \
     -v ON_ERROR_STOP=1 --set=sslmode=require
 
 # Load sample data
 PGPASSWORD='P@ssw0rd123!' psql \
-  -h "$FQDN" -p 5432 -U pgadmin -d polls_database_schema \
+  -h "$FQDN" -p 5432 -U pgadmin -d polls \
   -v ON_ERROR_STOP=1 --set=sslmode=require \
-  -f polls-database-schema/data.sql
+  -f polls/data.sql
 ```
 
 ### Tearing down Azure resources
@@ -279,7 +279,7 @@ replaced by underscores. For example:
 
 | Directory | Database name |
 | --- | --- |
-| `polls-database-schema/` | `polls_database_schema` |
+| `polls/` | `polls` |
 | `my-new-db/` | `my_new_db` |
 | `Inventory/` | `inventory` |
 
@@ -312,7 +312,7 @@ my-new-db/
 | `undeploy-azure.sh` | Tears down Azure resources — deletes the server or the entire resource group |
 | `main.bicep` | Bicep template — provisions Azure PostgreSQL Flexible Server, database, and firewall rules |
 
-### polls-database-schema/
+### polls/
 
 | File | Purpose |
 | --- | --- |

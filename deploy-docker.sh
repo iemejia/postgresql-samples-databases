@@ -15,7 +15,7 @@
 #
 # Usage:
 #   ./deploy-docker.sh                  # deploy all discovered databases
-#   ./deploy-docker.sh polls-database-schema   # deploy only this subdirectory
+#   ./deploy-docker.sh polls   # deploy only this subdirectory
 #   POSTGRES_PASSWORD=secret ./deploy-docker.sh
 #
 # Requirements: docker
