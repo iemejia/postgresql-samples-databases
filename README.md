@@ -11,7 +11,7 @@ Flexible Server.
 | Directory | Description |
 | --- | --- |
 | [polls-database-schema](./polls-database-schema) | Lightweight polls / survey application (DDL + sample data) |
-| [postgresql-adventureworks](./postgresql-adventureworks) | AdventureWorks 2016 (converted from SQL Server, `pg_restore` backup) |
+| [adventureworks](./adventureworks) | AdventureWorks OLTP — 68 tables, 90 FKs, and 89 views across 10 schemas (converted from SQL Server) |
 
 > **Note:** Only subdirectories that contain a `schema.sql` file are picked up
 > by the generic deploy scripts. See [Adding a New Database](#adding-a-new-database)
@@ -34,7 +34,7 @@ chmod +x deploy-docker.sh
 
 This will:
 
-1. Pull the official `postgres:18` image.
+1. Pull the official `postgres` image (the `latest` tag).
 2. Start a container named `samples-db`.
 3. Scan every subdirectory for a `schema.sql` file.
 4. For each discovered database — create the database, load the schema, and
@@ -49,6 +49,7 @@ Once complete the script prints connection details:
   Password  : postgres
 
   Databases:
+    - adventureworks
     - polls_database_schema
 ```
 
@@ -101,7 +102,7 @@ script:
 | `POSTGRES_USER` | `postgres` | Database superuser |
 | `POSTGRES_PASSWORD` | `postgres` | Superuser password |
 | `POSTGRES_PORT` | `5432` | Host port mapped to the container |
-| `POSTGRES_IMAGE` | `postgres:18` | Docker image to use |
+| `POSTGRES_IMAGE` | `postgres:latest` | Docker image to use |
 
 Example with custom settings:
 
@@ -151,6 +152,7 @@ Once complete, the script prints connection details:
   Admin user     : pgadmin
 
   Databases:
+    - adventureworks
     - polls_database_schema
 
 Connect with:
@@ -317,19 +319,12 @@ my-new-db/
 | `schema.sql` | DDL — creates sequences, tables, indexes, and constraints |
 | `data.sql` | DML — inserts sample users, polls, metadata, questions, and answers |
 
-### postgresql-adventureworks/
+### adventureworks/
 
 | File | Purpose |
 | --- | --- |
-| `AdventureWorksPG.gz` | `pg_restore`-compatible compressed database backup |
-| `CreatePostgreSQLFlexibleServer.ps1` | PowerShell function to provision an Azure Flexible Server |
-| `Call-CreatePGFlexServer.ps1` | Example caller script for the above function |
-| `README.md` | Step-by-step guide with screenshots |
-
-> **Note:** `postgresql-adventureworks` uses a binary `pg_restore` backup and
-> does not include `schema.sql`, so it is **not** auto-discovered by the
-> generic deploy scripts. See its own
-> [README](./postgresql-adventureworks/README.md) for deployment instructions.
+| `schema.sql` | DDL — 10 schemas, 68 tables, 6 custom domains, 2 extensions (`uuid-ossp`, `tablefunc`), 87 views, 2 materialized views, 68 primary keys, 90 foreign keys |
+| `data.sql` | DML — sample data via `COPY FROM STDIN` (~86 MB, 760K lines covering all 68 tables) |
 
 ---
 
