@@ -19,7 +19,7 @@ set -euo pipefail
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
 CONTAINER_NAME="${CONTAINER_NAME:-samples-db}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:latest}"
 
 # ---------------------------------------------------------------------------
 # Parse arguments
@@ -38,7 +38,7 @@ for arg in "$@"; do
       echo ""
       echo "Environment variables:"
       echo "  CONTAINER_NAME   Container name  (default: samples-db)"
-      echo "  POSTGRES_IMAGE   Docker image     (default: postgres:18)"
+      echo "  POSTGRES_IMAGE   Docker image     (default: postgres:latest)"
       exit 0
       ;;
     *)
@@ -81,8 +81,12 @@ if "$KEEP_IMAGE"; then
 else
   if docker image inspect "$POSTGRES_IMAGE" &>/dev/null; then
     log "Removing image '${POSTGRES_IMAGE}'..."
-    docker rmi "$POSTGRES_IMAGE" >/dev/null
-    log "Image '${POSTGRES_IMAGE}' removed."
+    if docker rmi "$POSTGRES_IMAGE" >/dev/null 2>&1; then
+      log "Image '${POSTGRES_IMAGE}' removed."
+    else
+      warn "Could not remove image '${POSTGRES_IMAGE}' — other containers may still be using it."
+      warn "Remove it manually with: docker rmi -f ${POSTGRES_IMAGE}"
+    fi
   else
     log "Image '${POSTGRES_IMAGE}' not found locally. Nothing to remove."
   fi

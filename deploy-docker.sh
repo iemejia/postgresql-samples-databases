@@ -30,7 +30,7 @@ CONTAINER_NAME="${CONTAINER_NAME:-samples-db}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:18}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:latest}"
 
 # ---------------------------------------------------------------------------
 # Resolve root directory (relative to this script)
@@ -119,6 +119,12 @@ docker pull "$POSTGRES_IMAGE"
 if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
   log "Removing existing container '${CONTAINER_NAME}'..."
   docker rm -f "$CONTAINER_NAME" >/dev/null
+fi
+
+# Check if the target port is already in use by another container
+BLOCKING_CONTAINER="$(docker ps --format '{{.Names}}' --filter "publish=${POSTGRES_PORT}" | head -n1)"
+if [[ -n "$BLOCKING_CONTAINER" ]]; then
+  die "Port ${POSTGRES_PORT} is already allocated by container '${BLOCKING_CONTAINER}'. Stop it first with: docker rm -f ${BLOCKING_CONTAINER}"
 fi
 
 log "Starting container '${CONTAINER_NAME}' on port ${POSTGRES_PORT}..."
