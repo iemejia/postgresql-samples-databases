@@ -96,3 +96,65 @@ jobs:
         run: |
           chmod +x undeploy-docker.sh
           ./undeploy-docker.sh --keep-image
+
+  deploy-age:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy graph databases
+        run: |
+          chmod +x deploy-docker-age.sh
+          ./deploy-docker-age.sh
+
+      - name: Verify graph database exists
+        run: |
+          DATABASES=$(docker exec samples-age-db psql -U postgres -tAc \
+            "SELECT datname FROM pg_database WHERE datname NOT IN ('postgres','template0','template1') ORDER BY datname;")
+          echo "Databases found:"
+          echo "$DATABASES"
+
+          if echo "$DATABASES" | grep -qx "movies_graph"; then
+            echo "OK: movies_graph"
+          else
+            echo "FAIL: database 'movies_graph' not found" >&2
+            exit 1
+          fi
+
+      - name: Verify Movie nodes
+        run: |
+          MOVIE_COUNT=$(docker exec samples-age-db psql -U postgres -d movies_graph -tAc \
+            "LOAD 'age'; SET search_path = ag_catalog, \"\\\$user\", public; SELECT * FROM cypher('movies', \$\$ MATCH (m:Movie) RETURN count(m) \$\$) AS (count agtype);")
+          echo "Movie nodes: $MOVIE_COUNT"
+          if [ "$MOVIE_COUNT" -lt 38 ]; then
+            echo "FAIL: expected at least 38 Movie nodes, got $MOVIE_COUNT" >&2
+            exit 1
+          fi
+
+      - name: Verify Person nodes
+        run: |
+          PERSON_COUNT=$(docker exec samples-age-db psql -U postgres -d movies_graph -tAc \
+            "LOAD 'age'; SET search_path = ag_catalog, \"\\\$user\", public; SELECT * FROM cypher('movies', \$\$ MATCH (p:Person) RETURN count(p) \$\$) AS (count agtype);")
+          echo "Person nodes: $PERSON_COUNT"
+          if [ "$PERSON_COUNT" -lt 133 ]; then
+            echo "FAIL: expected at least 133 Person nodes, got $PERSON_COUNT" >&2
+            exit 1
+          fi
+
+      - name: Verify edges
+        run: |
+          EDGE_COUNT=$(docker exec samples-age-db psql -U postgres -d movies_graph -tAc \
+            "LOAD 'age'; SET search_path = ag_catalog, \"\\\$user\", public; SELECT * FROM cypher('movies', \$\$ MATCH ()-[r]->() RETURN count(r) \$\$) AS (count agtype);")
+          echo "Total edges: $EDGE_COUNT"
+          if [ "$EDGE_COUNT" -lt 250 ]; then
+            echo "FAIL: expected at least 250 edges, got $EDGE_COUNT" >&2
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always()
+        run: |
+          chmod +x undeploy-docker-age.sh
+          ./undeploy-docker-age.sh --keep-image

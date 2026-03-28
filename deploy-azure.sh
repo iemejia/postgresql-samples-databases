@@ -93,12 +93,24 @@ to_db_name() {
 discover_databases() {
   local dirs=()
   for dir in "$SCRIPT_DIR"/*/; do
-    [[ -f "${dir}schema.sql" ]] && dirs+=("$(basename "$dir")")
+    local name
+    name="$(basename "$dir")"
+    # Skip *-graph/ directories — those are graph databases handled separately
+    [[ "$name" == *-graph ]] && continue
+    [[ -f "${dir}schema.sql" ]] && dirs+=("$name")
   done
 
   if [[ ${#dirs[@]} -eq 0 ]]; then
     die "No subdirectories with a schema.sql file found in ${SCRIPT_DIR}."
   fi
+  echo "${dirs[@]}"
+}
+
+discover_graph_databases() {
+  local dirs=()
+  for dir in "$SCRIPT_DIR"/*-graph/; do
+    [[ -d "$dir" && -f "${dir}schema.sql" ]] && dirs+=("$(basename "$dir")")
+  done
   echo "${dirs[@]}"
 }
 
@@ -251,6 +263,88 @@ for dir_name in "${TARGET_DIRS[@]}"; do
 
   DEPLOYED+=("$DB_NAME")
 done
+
+# ---------------------------------------------------------------------------
+# Deploy graph databases (Apache AGE)
+# ---------------------------------------------------------------------------
+read -ra GRAPH_DIRS <<< "$(discover_graph_databases)"
+
+if [[ ${#GRAPH_DIRS[@]} -gt 0 && -n "${GRAPH_DIRS[0]}" ]]; then
+  log "Graph databases discovered: ${GRAPH_DIRS[*]}"
+  log "Enabling Apache AGE extension on the server..."
+
+  # Enable the age extension in Azure server parameters
+  az postgres flexible-server parameter set \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --server-name "$SERVER_NAME" \
+    --name azure.extensions \
+    --value age \
+    --output none
+
+  az postgres flexible-server parameter set \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --server-name "$SERVER_NAME" \
+    --name shared_preload_libraries \
+    --value age \
+    --output none
+
+  log "Restarting server to apply shared_preload_libraries change..."
+  az postgres flexible-server restart \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --name "$SERVER_NAME" \
+    --output none
+
+  # Wait for server to come back up
+  log "Waiting for server to restart..."
+  sleep 30
+  retries=20
+  while ! PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+    -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -c "SELECT 1;" &>/dev/null; do
+    retries=$((retries - 1))
+    if [[ $retries -le 0 ]]; then
+      die "Server did not become ready after restart."
+    fi
+    sleep 5
+  done
+
+  for dir_name in "${GRAPH_DIRS[@]}"; do
+    DB_NAME="$(to_db_name "$dir_name")"
+    SCHEMA_FILE="${SCRIPT_DIR}/${dir_name}/schema.sql"
+    DATA_FILE="${SCRIPT_DIR}/${dir_name}/data.sql"
+
+    log "--- Deploying graph database '${DB_NAME}' from '${dir_name}/' ---"
+
+    # Create database
+    log "Creating database '${DB_NAME}'..."
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" \
+      -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null || true
+
+    # Load schema (vertices)
+    log "Loading graph schema into '${DB_NAME}'..."
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+      -h "$FQDN" \
+      -p 5432 \
+      -U "$ADMIN_LOGIN" \
+      -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 \
+      -f "$SCHEMA_FILE"
+
+    # Load edges if present
+    if [[ -f "$DATA_FILE" ]]; then
+      log "Loading graph data (edges) into '${DB_NAME}'..."
+      PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+        -h "$FQDN" \
+        -p 5432 \
+        -U "$ADMIN_LOGIN" \
+        -d "$DB_NAME" \
+        -v ON_ERROR_STOP=1 \
+        -f "$DATA_FILE"
+    fi
+
+    DEPLOYED+=("$DB_NAME")
+  done
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

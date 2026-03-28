@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================================
-# deploy-docker.sh — Deploy all sample databases to a single PostgreSQL container
+# deploy-docker-age.sh — Deploy graph databases to an Apache AGE container
 # =============================================================================
-# Auto-discovers subdirectories containing a schema.sql file and treats each as
-# a separate database.  All databases are deployed into a single shared
-# PostgreSQL container.
+# Auto-discovers subdirectories matching *-graph/ that contain a schema.sql
+# file and treats each as a graph database.  All graph databases are deployed
+# into a single shared Apache AGE container (separate from the relational
+# container managed by deploy-docker.sh).
 #
-# Each subdirectory can contain:
-#   schema.sql       — DDL (required; the CREATE DATABASE line is skipped)
-#   data.sql         — DML / sample data (optional)
+# Each *-graph/ subdirectory can contain:
+#   schema.sql       — DDL: extension setup, graph creation, vertices (required)
+#   data.sql         — DML: edges / relationships (optional)
 #
 # The database name is derived from the subdirectory name (lowered, hyphens
-# replaced with underscores).
+# replaced with underscores).  e.g. movies-graph → movies_graph
 #
 # Usage:
-#   ./deploy-docker.sh                  # deploy all discovered databases
-#   ./deploy-docker.sh polls   # deploy only this subdirectory
-#   POSTGRES_PASSWORD=secret ./deploy-docker.sh
+#   ./deploy-docker-age.sh                       # deploy all graph databases
+#   ./deploy-docker-age.sh movies-graph          # deploy only this one
+#   POSTGRES_PASSWORD=secret ./deploy-docker-age.sh
 #
 # Requirements: docker
 # =============================================================================
@@ -26,11 +27,11 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-CONTAINER_NAME="${CONTAINER_NAME:-samples-db}"
+CONTAINER_NAME="${CONTAINER_NAME:-samples-age-db}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
-POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:latest}"
+POSTGRES_PORT="${POSTGRES_PORT:-5433}"
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-apache/age:latest}"
 
 # ---------------------------------------------------------------------------
 # Resolve root directory (relative to this script)
@@ -46,16 +47,16 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 wait_for_pg() {
   local retries=30
-  log "Waiting for PostgreSQL to accept connections..."
+  log "Waiting for PostgreSQL (AGE) to accept connections..."
   until docker exec "$CONTAINER_NAME" \
     pg_isready -U "$POSTGRES_USER" -q 2>/dev/null; do
     retries=$((retries - 1))
     if [[ $retries -le 0 ]]; then
-      die "PostgreSQL did not become ready in time."
+      die "PostgreSQL (AGE) did not become ready in time."
     fi
     sleep 1
   done
-  log "PostgreSQL is ready."
+  log "PostgreSQL (AGE) is ready."
 }
 
 # Convert a directory name to a valid PostgreSQL database name
@@ -70,20 +71,16 @@ run_sql_file() {
 }
 
 # ---------------------------------------------------------------------------
-# Discover databases
+# Discover graph databases (*-graph/ directories with schema.sql)
 # ---------------------------------------------------------------------------
 discover_databases() {
   local dirs=()
-  for dir in "$SCRIPT_DIR"/*/; do
-    local name
-    name="$(basename "$dir")"
-    # Skip *-graph/ directories — those are handled by deploy-docker-age.sh
-    [[ "$name" == *-graph ]] && continue
-    [[ -f "${dir}schema.sql" ]] && dirs+=("$name")
+  for dir in "$SCRIPT_DIR"/*-graph/; do
+    [[ -d "$dir" && -f "${dir}schema.sql" ]] && dirs+=("$(basename "$dir")")
   done
 
   if [[ ${#dirs[@]} -eq 0 ]]; then
-    die "No subdirectories with a schema.sql file found in ${SCRIPT_DIR}."
+    die "No *-graph/ subdirectories with a schema.sql file found in ${SCRIPT_DIR}."
   fi
   echo "${dirs[@]}"
 }
@@ -111,10 +108,10 @@ else
   read -ra TARGET_DIRS <<< "$(discover_databases)"
 fi
 
-log "Databases to deploy: ${TARGET_DIRS[*]}"
+log "Graph databases to deploy: ${TARGET_DIRS[*]}"
 
 # ---------------------------------------------------------------------------
-# Start PostgreSQL container
+# Start Apache AGE container
 # ---------------------------------------------------------------------------
 log "Pulling image ${POSTGRES_IMAGE}..."
 docker pull "$POSTGRES_IMAGE"
@@ -143,7 +140,7 @@ docker run -d \
 wait_for_pg
 
 # ---------------------------------------------------------------------------
-# Deploy each database
+# Deploy each graph database
 # ---------------------------------------------------------------------------
 DEPLOYED=()
 
@@ -152,7 +149,7 @@ for dir_name in "${TARGET_DIRS[@]}"; do
   SCHEMA_FILE="${SCRIPT_DIR}/${dir_name}/schema.sql"
   DATA_FILE="${SCRIPT_DIR}/${dir_name}/data.sql"
 
-  log "--- Deploying database '${DB_NAME}' from '${dir_name}/' ---"
+  log "--- Deploying graph database '${DB_NAME}' from '${dir_name}/' ---"
 
   # Create the database (skip if it already exists)
   log "Creating database '${DB_NAME}'..."
@@ -163,18 +160,16 @@ for dir_name in "${TARGET_DIRS[@]}"; do
     || docker exec "$CONTAINER_NAME" \
       psql -U "$POSTGRES_USER" -c "CREATE DATABASE ${DB_NAME};"
 
-  # Load schema (skip any CREATE DATABASE lines in the file)
+  # Load schema (extension setup, graph creation, vertices)
   log "Loading schema into '${DB_NAME}'..."
-  grep -vi '^CREATE DATABASE' "$SCHEMA_FILE" | \
-    docker exec -i "$CONTAINER_NAME" \
-      psql -U "$POSTGRES_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1
+  run_sql_file "$DB_NAME" "$SCHEMA_FILE"
 
-  # Load sample data if present
+  # Load edges / relationships if present
   if [[ -f "$DATA_FILE" ]]; then
-    log "Loading sample data into '${DB_NAME}'..."
+    log "Loading graph data (edges) into '${DB_NAME}'..."
     run_sql_file "$DB_NAME" "$DATA_FILE"
   else
-    log "No data.sql found for '${dir_name}/' — skipping sample data."
+    log "No data.sql found for '${dir_name}/' — skipping edge data."
   fi
 
   DEPLOYED+=("$DB_NAME")
@@ -183,14 +178,15 @@ done
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-log "Done!  ${#DEPLOYED[@]} database(s) deployed."
+log "Done!  ${#DEPLOYED[@]} graph database(s) deployed."
 echo ""
 echo "  Container : ${CONTAINER_NAME}"
 echo "  Host      : localhost:${POSTGRES_PORT}"
 echo "  User      : ${POSTGRES_USER}"
 echo "  Password  : ${POSTGRES_PASSWORD}"
+echo "  Image     : ${POSTGRES_IMAGE}"
 echo ""
-echo "  Databases:"
+echo "  Graph databases:"
 for db in "${DEPLOYED[@]}"; do
   echo "    - ${db}"
 done
@@ -200,6 +196,11 @@ echo "  psql -h localhost -p ${POSTGRES_PORT} -U ${POSTGRES_USER} -d <database>"
 echo ""
 echo "Or via Docker:"
 echo "  docker exec -it ${CONTAINER_NAME} psql -U ${POSTGRES_USER} -d <database>"
+echo ""
+echo "Example Cypher query (requires per-session AGE setup):"
+echo "  LOAD 'age';"
+echo "  SET search_path = ag_catalog, \"\\\$user\", public;"
+echo "  SELECT * FROM cypher('movies', \$\$ MATCH (m:Movie) RETURN m.title LIMIT 5 \$\$) AS (title agtype);"
 echo ""
 echo "To stop and remove the container:"
 echo "  docker rm -f ${CONTAINER_NAME}"
