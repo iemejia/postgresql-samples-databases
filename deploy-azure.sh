@@ -26,7 +26,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-samples-rg}"
+AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-postgresql-samples-rg}"
 AZURE_LOCATION="${AZURE_LOCATION:-swedencentral}"
 SERVER_NAME="${SERVER_NAME:-samples-pg-server}"
 ADMIN_LOGIN="${ADMIN_LOGIN:-pgadmin}"

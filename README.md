@@ -153,7 +153,7 @@ The script will:
 Once complete, the script prints connection details:
 
 ```
-  Resource group : samples-rg
+  Resource group : postgresql-samples-rg
   Server FQDN    : samples-pg-server.postgres.database.azure.com
   Port           : 5432
   Admin user     : pgadmin
@@ -180,7 +180,7 @@ script:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `AZURE_RESOURCE_GROUP` | `samples-rg` | Azure resource group name |
+| `AZURE_RESOURCE_GROUP` | `postgresql-samples-rg` | Azure resource group name |
 | `AZURE_LOCATION` | `swedencentral` | Azure region |
 | `SERVER_NAME` | `samples-pg-server` | PostgreSQL Flexible Server name |
 | `ADMIN_LOGIN` | `pgadmin` | Administrator login |
@@ -207,10 +207,10 @@ If you prefer to deploy the infrastructure separately without the wrapper
 script:
 
 ```bash
-az group create --name samples-rg --location eastus
+az group create --name postgresql-samples-rg --location eastus
 
 az deployment group create \
-  --resource-group samples-rg \
+  --resource-group postgresql-samples-rg \
   --template-file main.bicep \
   --parameters \
     administratorLoginPassword='P@ssw0rd123!' \
@@ -261,7 +261,7 @@ Override the defaults with environment variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `AZURE_RESOURCE_GROUP` | `samples-rg` | Resource group to delete |
+| `AZURE_RESOURCE_GROUP` | `postgresql-samples-rg` | Resource group to delete |
 | `SERVER_NAME` | `samples-pg-server` | Server to delete (with `--server-only`) |
 
 ```bash

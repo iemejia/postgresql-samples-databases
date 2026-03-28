@@ -21,7 +21,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration (override via environment variables)
 # ---------------------------------------------------------------------------
-AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-samples-rg}"
+AZURE_RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-postgresql-samples-rg}"
 SERVER_NAME="${SERVER_NAME:-samples-pg-server}"
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ for arg in "$@"; do
       echo "  --help, -h     Show this help message"
       echo ""
       echo "Environment variables:"
-      echo "  AZURE_RESOURCE_GROUP  Resource group name  (default: samples-rg)"
+      echo "  AZURE_RESOURCE_GROUP  Resource group name  (default: postgresql-samples-rg)"
       echo "  SERVER_NAME           Server name          (default: samples-pg-server)"
       exit 0
       ;;
