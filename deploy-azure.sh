@@ -76,7 +76,8 @@ prompt_password() {
 detect_public_ip() {
   local ip=""
   for url in "https://api.ipify.org" "https://ifconfig.me/ip" "https://checkip.amazonaws.com"; do
-    ip="$(curl -s --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]')" && break
+    ip="$(curl -s --max-time 5 "$url" 2>/dev/null | tr -d '[:space:]')"
+    [[ -n "$ip" ]] && break
   done
   echo "$ip"
 }
@@ -179,14 +180,14 @@ if [[ -n "$CLIENT_IP" ]]; then
   DEPLOYMENT_PARAMS+=("firewallClientIpAddress=${CLIENT_IP}")
 fi
 
-DEPLOY_OUTPUT="$(az deployment group create \
+FQDN="$(az deployment group create \
   --resource-group "$AZURE_RESOURCE_GROUP" \
   --template-file "$BICEP_FILE" \
   --parameters "${DEPLOYMENT_PARAMS[@]}" \
-  --output json)"
+  --query "properties.outputs.fqdn.value" \
+  --output tsv 2>/dev/null || true)"
 
-# Extract FQDN
-FQDN="$(echo "$DEPLOY_OUTPUT" | az query -q "properties.outputs.fqdn.value" --output tsv 2>/dev/null || true)"
+# Fallback: query the deployment directly if the inline extraction failed
 if [[ -z "$FQDN" ]]; then
   FQDN="$(az deployment group show \
     --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -217,33 +218,30 @@ for dir_name in "${TARGET_DIRS[@]}"; do
   # Create database if it wasn't created by the Bicep template
   if [[ "$DB_NAME" != "$FIRST_DB_NAME" ]]; then
     log "Creating database '${DB_NAME}'..."
-    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
       -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" \
-      --set=sslmode=require \
       -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null || true
   fi
 
   # Load schema (skip any CREATE DATABASE lines)
   log "Loading schema into '${DB_NAME}'..."
   grep -vi '^CREATE DATABASE' "$SCHEMA_FILE" | \
-    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
       -h "$FQDN" \
       -p 5432 \
       -U "$ADMIN_LOGIN" \
       -d "$DB_NAME" \
-      -v ON_ERROR_STOP=1 \
-      --set=sslmode=require
+      -v ON_ERROR_STOP=1
 
   # Load sample data if present and enabled
   if [[ "$LOAD_SAMPLE_DATA" == "true" ]] && [[ -f "$DATA_FILE" ]]; then
     log "Loading sample data into '${DB_NAME}'..."
-    PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
       -h "$FQDN" \
       -p 5432 \
       -U "$ADMIN_LOGIN" \
       -d "$DB_NAME" \
       -v ON_ERROR_STOP=1 \
-      --set=sslmode=require \
       -f "$DATA_FILE"
   elif [[ ! -f "$DATA_FILE" ]]; then
     log "No data.sql found for '${dir_name}/' — skipping sample data."

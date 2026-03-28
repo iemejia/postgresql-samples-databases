@@ -223,21 +223,20 @@ Then load each database manually:
 FQDN="samples-pg-server.postgres.database.azure.com"
 
 # Create the database
-PGPASSWORD='P@ssw0rd123!' psql \
+PGPASSWORD='P@ssw0rd123!' PGSSLMODE=require psql \
   -h "$FQDN" -p 5432 -U pgadmin \
-  --set=sslmode=require \
   -c "CREATE DATABASE polls;"
 
 # Load schema (skip the CREATE DATABASE line)
 grep -v '^CREATE DATABASE' polls/schema.sql | \
-  PGPASSWORD='P@ssw0rd123!' psql \
+  PGPASSWORD='P@ssw0rd123!' PGSSLMODE=require psql \
     -h "$FQDN" -p 5432 -U pgadmin -d polls \
-    -v ON_ERROR_STOP=1 --set=sslmode=require
+    -v ON_ERROR_STOP=1
 
 # Load sample data
-PGPASSWORD='P@ssw0rd123!' psql \
+PGPASSWORD='P@ssw0rd123!' PGSSLMODE=require psql \
   -h "$FQDN" -p 5432 -U pgadmin -d polls \
-  -v ON_ERROR_STOP=1 --set=sslmode=require \
+  -v ON_ERROR_STOP=1 \
   -f polls/data.sql
 ```
 
