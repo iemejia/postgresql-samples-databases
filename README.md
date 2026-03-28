@@ -15,6 +15,7 @@ Flexible Server.
 | [polls](./polls) | Lightweight polls / survey application (DDL + sample data) |
 | [adventureworks](./adventureworks) | AdventureWorks OLTP — 68 tables, 90 FKs, and 89 views across 10 schemas (converted from SQL Server) |
 | [dvdrental](./dvdrental) | DVD Rental store (Pagila) — 15 tables with partitioned payments, 7 views, triggers, and functions |
+| [tpch](./tpch) | TPC-H decision-support benchmark — 8 tables generated at any scale factor via dbgen (data is generated at runtime, not committed) |
 
 ### Graph Databases (Apache AGE)
 
@@ -25,6 +26,8 @@ Flexible Server.
 > **Note:** Relational databases (subdirectories without a `-graph` suffix) are
 > deployed by `deploy-docker.sh`.  Graph databases (`*-graph/` directories) are
 > deployed by `deploy-docker-age.sh` into a separate Apache AGE container.
+> The TPC-H database uses its own `generate-and-load.sh` script (data is
+> generated at runtime, not committed to the repository).
 > See [Adding a New Database](#adding-a-new-database) for the convention.
 
 **You can use the runtime of your choice (Python, PHP, .NET, Node.js, etc.) to
@@ -496,6 +499,34 @@ my-graph/
 > [Neo4j Movies](https://github.com/neo4j-graph-examples/movies) example dataset.
 > All data is factual (movie titles, actor names, release years) and is not
 > subject to copyright.
+
+### tpch/
+
+| File | Purpose |
+| --- | --- |
+| `generate-and-load.sh` | Clones [tpch-kit](https://github.com/gregrahn/tpch-kit), compiles dbgen, generates TPC-H data at the requested scale factor, creates the schema (8 tables, PKs, FKs, indexes), and bulk-loads data via `COPY` |
+
+> **Source:** Data is generated at runtime by the TPC-H `dbgen` tool.  The
+> TPC-H specification and dbgen source code are copyrighted by the
+> [Transaction Processing Performance Council (TPC)](https://www.tpc.org/).
+> No TPC materials are stored in this repository — the script clones and builds
+> dbgen from a public GitHub mirror at deploy time.
+
+**Usage:**
+
+```bash
+# Tiny dataset (~10 MB) against the local Docker container
+./tpch/generate-and-load.sh
+
+# 1 GB dataset
+./tpch/generate-and-load.sh --scale-factor 1
+
+# Against a remote server
+./tpch/generate-and-load.sh -s 1 -h myserver.postgres.database.azure.com -U pgadmin -W 'P@ss!'
+
+# See all options
+./tpch/generate-and-load.sh --help
+```
 
 ---
 
