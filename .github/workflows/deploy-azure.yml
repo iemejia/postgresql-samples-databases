@@ -1,0 +1,150 @@
+name: Deploy Azure
+
+on:
+  workflow_dispatch:
+
+env:
+  AZURE_RESOURCE_GROUP: postgresql-samples-rg
+  AZURE_LOCATION: swedencentral
+  SERVER_NAME: samples-pg-server
+  ADMIN_LOGIN: pgadmin
+  POSTGRES_VERSION: "18"
+  SKU_TIER: Burstable
+  SKU_NAME: Standard_B1ms
+  STORAGE_SIZE_GB: "32"
+  LOAD_SAMPLE_DATA: "true"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Remove existing resource group
+        run: |
+          if az group show --name "$AZURE_RESOURCE_GROUP" --output none 2>/dev/null; then
+            echo "Resource group '$AZURE_RESOURCE_GROUP' exists. Deleting..."
+            az group delete \
+              --name "$AZURE_RESOURCE_GROUP" \
+              --yes
+            echo "Resource group '$AZURE_RESOURCE_GROUP' deleted."
+          else
+            echo "Resource group '$AZURE_RESOURCE_GROUP' does not exist. Skipping deletion."
+          fi
+
+      - name: Verify resource group is removed
+        run: |
+          if az group show --name "$AZURE_RESOURCE_GROUP" --output none 2>/dev/null; then
+            echo "FAIL: Resource group '$AZURE_RESOURCE_GROUP' still exists after deletion." >&2
+            exit 1
+          fi
+          echo "Confirmed: resource group '$AZURE_RESOURCE_GROUP' does not exist."
+
+      - name: Deploy all databases
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          chmod +x deploy-azure.sh
+          ./deploy-azure.sh
+
+      - name: Verify databases exist
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          FQDN="${SERVER_NAME}.postgres.database.azure.com"
+          DATABASES=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -tAc \
+            "SELECT datname FROM pg_database WHERE datname NOT IN ('postgres','template0','template1','azure_maintenance','azure_sys') ORDER BY datname;")
+          echo "Databases found:"
+          echo "$DATABASES"
+
+          for expected in adventureworks dvdrental polls; do
+            if echo "$DATABASES" | grep -qx "$expected"; then
+              echo "OK: $expected"
+            else
+              echo "FAIL: database '$expected' not found" >&2
+              exit 1
+            fi
+          done
+
+      - name: Verify adventureworks
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          FQDN="${SERVER_NAME}.postgres.database.azure.com"
+          TABLE_COUNT=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d adventureworks -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema');")
+          echo "adventureworks tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 68 ]; then
+            echo "FAIL: expected at least 68 tables, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d adventureworks -tAc \
+            "SELECT count(*) FROM person.person;")
+          echo "person.person rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: person.person is empty" >&2
+            exit 1
+          fi
+
+      - name: Verify dvdrental
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          FQDN="${SERVER_NAME}.postgres.database.azure.com"
+          TABLE_COUNT=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d dvdrental -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';")
+          echo "dvdrental tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 15 ]; then
+            echo "FAIL: expected at least 15 tables, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d dvdrental -tAc \
+            "SELECT count(*) FROM film;")
+          echo "film rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: film table is empty" >&2
+            exit 1
+          fi
+
+      - name: Verify polls
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          FQDN="${SERVER_NAME}.postgres.database.azure.com"
+          TABLE_COUNT=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d polls -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';")
+          echo "polls tables: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 1 ]; then
+            echo "FAIL: expected at least 1 table, got $TABLE_COUNT" >&2
+            exit 1
+          fi
+
+          ROW_CHECK=$(PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+            -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d polls -tAc \
+            "SELECT count(*) FROM users;")
+          echo "users rows: $ROW_CHECK"
+          if [ "$ROW_CHECK" -lt 1 ]; then
+            echo "FAIL: users table is empty" >&2
+            exit 1
+          fi
+
+      - name: Tear down
+        if: always()
+        run: |
+          chmod +x undeploy-azure.sh
+          ./undeploy-azure.sh --no-wait
