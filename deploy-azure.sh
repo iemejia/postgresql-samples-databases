@@ -149,6 +149,42 @@ log "Databases to deploy: ${TARGET_DIRS[*]}"
 FIRST_DB_NAME="$(to_db_name "${TARGET_DIRS[0]}")"
 
 # ---------------------------------------------------------------------------
+# Discover required PostgreSQL extensions from all schema files
+# ---------------------------------------------------------------------------
+# Azure Database for PostgreSQL requires extensions to be explicitly
+# allow-listed via the azure.extensions server parameter before CREATE
+# EXTENSION / COMMENT ON EXTENSION can succeed.  We scan all schema files
+# (relational + graph) upfront so the Bicep template can set the parameter
+# during provisioning.
+REQUIRED_EXTENSIONS=()
+ALL_SCHEMA_DIRS=("${TARGET_DIRS[@]}")
+read -ra GRAPH_DIRS <<< "$(discover_graph_databases)"
+if [[ ${#GRAPH_DIRS[@]} -gt 0 && -n "${GRAPH_DIRS[0]}" ]]; then
+  ALL_SCHEMA_DIRS+=("${GRAPH_DIRS[@]}")
+fi
+
+for dir_name in "${ALL_SCHEMA_DIRS[@]}"; do
+  SCHEMA_FILE="${SCRIPT_DIR}/${dir_name}/schema.sql"
+  while IFS= read -r ext; do
+    # Deduplicate
+    found=false
+    for existing in "${REQUIRED_EXTENSIONS[@]+"${REQUIRED_EXTENSIONS[@]}"}"; do
+      [[ "$existing" == "$ext" ]] && found=true && break
+    done
+    "$found" || REQUIRED_EXTENSIONS+=("$ext")
+  done < <(grep -oi 'CREATE EXTENSION[^;]*' "$SCHEMA_FILE" \
+           | sed -n "s/.*IF NOT EXISTS \+//Ip" \
+           | awk '{print $1}' \
+           | tr -d '"' | tr '[:upper:]' '[:lower:]')
+done
+
+EXTENSIONS_CSV=""
+if [[ ${#REQUIRED_EXTENSIONS[@]} -gt 0 ]]; then
+  EXTENSIONS_CSV="$(IFS=,; echo "${REQUIRED_EXTENSIONS[*]}")"
+  log "Extensions to allow-list: ${EXTENSIONS_CSV}"
+fi
+
+# ---------------------------------------------------------------------------
 # Detect public IP for firewall rule
 # ---------------------------------------------------------------------------
 log "Detecting your public IP address..."
@@ -192,6 +228,10 @@ if [[ -n "$CLIENT_IP" ]]; then
   DEPLOYMENT_PARAMS+=("firewallClientIpAddress=${CLIENT_IP}")
 fi
 
+if [[ -n "$EXTENSIONS_CSV" ]]; then
+  DEPLOYMENT_PARAMS+=("allowedExtensions=${EXTENSIONS_CSV}")
+fi
+
 FQDN="$(az deployment group create \
   --resource-group "$AZURE_RESOURCE_GROUP" \
   --template-file "$BICEP_FILE" \
@@ -231,13 +271,22 @@ for dir_name in "${TARGET_DIRS[@]}"; do
   if [[ "$DB_NAME" != "$FIRST_DB_NAME" ]]; then
     log "Creating database '${DB_NAME}'..."
     PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
-      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" \
-      -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null || true
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d postgres \
+      -c "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" --tuples-only | grep -q 1 || \
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d postgres \
+      -c "CREATE DATABASE ${DB_NAME};"
   fi
 
-  # Load schema (skip any CREATE DATABASE lines)
+  # Load schema — filter / rewrite statements incompatible with Azure:
+  #   - Strip CREATE DATABASE (we already created the database above)
+  #   - Strip COMMENT ON EXTENSION (Azure blocks it for non-superusers)
+  #   - Rewrite CREATE SCHEMA → CREATE SCHEMA IF NOT EXISTS (Azure may
+  #     pre-create the public schema or a partial load may leave schemas)
   log "Loading schema into '${DB_NAME}'..."
   grep -vi '^CREATE DATABASE' "$SCHEMA_FILE" | \
+  grep -vi '^COMMENT ON EXTENSION' | \
+  sed 's/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /i' | \
     PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
       -h "$FQDN" \
       -p 5432 \
@@ -271,16 +320,10 @@ read -ra GRAPH_DIRS <<< "$(discover_graph_databases)"
 
 if [[ ${#GRAPH_DIRS[@]} -gt 0 && -n "${GRAPH_DIRS[0]}" ]]; then
   log "Graph databases discovered: ${GRAPH_DIRS[*]}"
-  log "Enabling Apache AGE extension on the server..."
+  log "Enabling Apache AGE shared_preload_libraries on the server..."
 
-  # Enable the age extension in Azure server parameters
-  az postgres flexible-server parameter set \
-    --resource-group "$AZURE_RESOURCE_GROUP" \
-    --server-name "$SERVER_NAME" \
-    --name azure.extensions \
-    --value age \
-    --output none
-
+  # Extensions are already allow-listed via the Bicep template; only
+  # shared_preload_libraries + restart is needed for AGE.
   az postgres flexible-server parameter set \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --server-name "$SERVER_NAME" \
@@ -299,7 +342,7 @@ if [[ ${#GRAPH_DIRS[@]} -gt 0 && -n "${GRAPH_DIRS[0]}" ]]; then
   sleep 30
   retries=20
   while ! PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
-    -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -c "SELECT 1;" &>/dev/null; do
+    -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d postgres -c "SELECT 1;" &>/dev/null; do
     retries=$((retries - 1))
     if [[ $retries -le 0 ]]; then
       die "Server did not become ready after restart."
@@ -317,29 +360,35 @@ if [[ ${#GRAPH_DIRS[@]} -gt 0 && -n "${GRAPH_DIRS[0]}" ]]; then
     # Create database
     log "Creating database '${DB_NAME}'..."
     PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
-      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" \
-      -c "CREATE DATABASE ${DB_NAME};" 2>/dev/null || true
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d postgres \
+      -c "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" --tuples-only | grep -q 1 || \
+    PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
+      -h "$FQDN" -p 5432 -U "$ADMIN_LOGIN" -d postgres \
+      -c "CREATE DATABASE ${DB_NAME};"
 
     # Load schema (vertices)
+    # Filter LOAD 'age' — on Azure the library is already loaded via
+    # shared_preload_libraries, and the explicit LOAD command is blocked
+    # for non-superusers.
     log "Loading graph schema into '${DB_NAME}'..."
+    grep -vi "^LOAD 'age';" "$SCHEMA_FILE" | \
     PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
       -h "$FQDN" \
       -p 5432 \
       -U "$ADMIN_LOGIN" \
       -d "$DB_NAME" \
-      -v ON_ERROR_STOP=1 \
-      -f "$SCHEMA_FILE"
+      -v ON_ERROR_STOP=1
 
     # Load edges if present
     if [[ -f "$DATA_FILE" ]]; then
       log "Loading graph data (edges) into '${DB_NAME}'..."
+      grep -vi "^LOAD 'age';" "$DATA_FILE" | \
       PGPASSWORD="$POSTGRES_PASSWORD" PGSSLMODE=require psql \
         -h "$FQDN" \
         -p 5432 \
         -U "$ADMIN_LOGIN" \
         -d "$DB_NAME" \
-        -v ON_ERROR_STOP=1 \
-        -f "$DATA_FILE"
+        -v ON_ERROR_STOP=1
     fi
 
     DEPLOYED+=("$DB_NAME")

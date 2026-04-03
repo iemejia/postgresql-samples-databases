@@ -111,6 +111,11 @@ param firewallClientIpAddress string = ''
 @description('Allow connections from other Azure services.')
 param allowAzureServices bool = true
 
+// ---- Extension parameters -------------------------------------------------
+
+@description('Comma-separated list of PostgreSQL extensions to allow-list on the server (e.g. "tablefunc,uuid-ossp"). Leave empty to skip.')
+param allowedExtensions string = ''
+
 // ---- Database parameters --------------------------------------------------
 
 @description('Name of the initial PostgreSQL database to create. Additional databases are created by the deploy script.')
@@ -196,6 +201,20 @@ resource initialDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@20
   properties: {
     charset: databaseCharset
     collation: databaseCollation
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Allow-listed extensions — sets the azure.extensions server parameter so that
+// CREATE EXTENSION / COMMENT ON EXTENSION statements succeed for the listed
+// extensions.
+// ---------------------------------------------------------------------------
+resource allowedExtensionsConfig 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2025-08-01' = if (!empty(allowedExtensions)) {
+  parent: postgresServer
+  name: 'azure.extensions'
+  properties: {
+    value: allowedExtensions
+    source: 'user-override'
   }
 }
 
